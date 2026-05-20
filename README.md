@@ -138,6 +138,7 @@ Endpoint:
 ```txt
 POST http://localhost:7072/chat
 Authorization: Bearer <token>
+X-Google-Auth: Bearer <google-token>  # optional CRM API forwarding token
 Content-Type: application/json
 ```
 
@@ -154,6 +155,8 @@ Request:
   ]
 }
 ```
+
+When `X-Google-Auth` is present on the `/chat` request, that Google bearer token is used for user identity resolution and re-injected to the CRM API as outbound `X-Google-Auth` through `data_tool`. When it is absent, the JWT from `Authorization` is used and forwarded as outbound `Authorization` as before. One of these bearer headers is required. Model-supplied tool headers cannot set `Authorization` or `X-Google-Auth`.
 
 Provider, model, temperature, max-token, and tool selection are server policy. Configure them in the server environment, not from the CLI or browser. Client-supplied `system` and `tool` messages are rejected; client-supplied `tools` and `tool_choice` are ignored.
 

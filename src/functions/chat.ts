@@ -1,7 +1,7 @@
 /*
  * Feature: Azure Functions adapter for the ai-workspace /chat route.
  * Notes: validates normal-user chat input, owns runtime policy, and applies CRM-origin CORS.
- * Recent changes: rejects client privileged roles and ignores client runtime/tool overrides.
+ * Recent changes: prefers X-Google-Auth bearer tokens for identity and CRM API auth with JWT fallback.
  */
 
 import type { HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
@@ -18,6 +18,12 @@ type IncomingChatMessage = {
   role: string;
   content: string;
 };
+type RequestAuthTokens = {
+  token: string;
+  source: "X-Google-Auth" | "Authorization";
+};
+
+const GOOGLE_AUTH_HEADER = "X-Google-Auth";
 
 let agentsMdCachePromise: Promise<LoadedAgentsMd> | undefined;
 let agentsMdCacheWorkspaceRoot: string | undefined;
@@ -37,18 +43,37 @@ function resolveErrorStatusCode(error: unknown): number {
   return Number(candidate.statusCode ?? candidate.status) || 500;
 }
 
-function extractBearerToken(request: HttpRequest): string | null {
-  const authHeader = request.headers.get("authorization");
-  if (!authHeader) {
+function parseBearerHeader(value: string | null, headerName: string): string | null {
+  if (!value) {
     return null;
   }
 
-  const parts = authHeader.split(" ");
+  const parts = value.split(" ");
   if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer" || !parts[1]) {
-    return null;
+    throw createHttpError(`${headerName}: Bearer <token> header is malformed`, 401);
   }
 
   return parts[1];
+}
+
+export function resolveRequestAuthTokens(request: HttpRequest): RequestAuthTokens | null {
+  const googleToken = parseBearerHeader(request.headers.get(GOOGLE_AUTH_HEADER), GOOGLE_AUTH_HEADER);
+  if (googleToken) {
+    return {
+      token: googleToken,
+      source: GOOGLE_AUTH_HEADER
+    };
+  }
+
+  const authorizationToken = parseBearerHeader(request.headers.get("authorization"), "Authorization");
+  if (!authorizationToken) {
+    return null;
+  }
+
+  return {
+    token: authorizationToken,
+    source: "Authorization"
+  };
 }
 
 function isIncomingChatMessage(value: unknown): value is IncomingChatMessage {
@@ -218,7 +243,7 @@ function emptyOptionsResponse(request: HttpRequest, env: EnvConfig): HttpRespons
     status: 204,
     headers: {
       ...createCorsHeaders(request, env),
-      "Access-Control-Allow-Headers": "authorization, content-type",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Google-Auth",
       "Access-Control-Allow-Methods": "POST, OPTIONS"
     }
   };
@@ -243,9 +268,9 @@ export async function chat(
       return emptyOptionsResponse(request, env);
     }
 
-    const token = extractBearerToken(request);
-    if (!token) {
-      return jsonResponse(401, { error: "Authorization: Bearer <token> header is required" }, request, env);
+    const authTokens = resolveRequestAuthTokens(request);
+    if (!authTokens) {
+      return jsonResponse(401, { error: "Authorization or X-Google-Auth bearer header is required" }, request, env);
     }
 
     if (!env.apiAuthUrl) {
@@ -254,7 +279,7 @@ export async function chat(
 
     let userId: string;
     try {
-      userId = await resolveUserId(token, env.apiAuthUrl);
+      userId = await resolveUserId(authTokens.token, env.apiAuthUrl);
     } catch (error) {
       if (error instanceof UserIdResolutionError) {
         return jsonResponse(401, { error: "Unauthorized" }, request, env);
@@ -274,7 +299,7 @@ export async function chat(
     const agentsMdCache = await getAgentsMdCache(workspaceRoot);
     const abortController = new AbortController();
 
-    context.log(`[chat] userId=${userId}`);
+    context.log(`[chat] userId=${userId} authSource=${authTokens.source}`);
 
     const runtimeInput = {
       messages: chatRequest.messages,
@@ -282,7 +307,8 @@ export async function chat(
       userId,
       workspaceRoot,
       agentsMd: agentsMdCache.content,
-      accessToken: token,
+      accessToken: authTokens.token,
+      accessTokenHeader: authTokens.source,
       signal: abortController.signal
     };
 

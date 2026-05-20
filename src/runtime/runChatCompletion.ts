@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: migrated into the Azure Functions app without AIW storage tools.
+ * Recent changes: passes trusted request auth header names into the host-owned API tool env.
  */
 
 import {
@@ -264,6 +264,10 @@ export async function* runChatCompletion(
 
     if (input.accessToken) {
       requestEnv.API_ACCESS_TOKEN = input.accessToken;
+    }
+
+    if (input.accessTokenHeader) {
+      requestEnv.API_AUTH_HEADER = input.accessTokenHeader;
     }
 
     const agentsMd = input.agentsMd ?? null;

@@ -1,7 +1,7 @@
 /*
  * Feature: workspace-configured outbound API tool for llm-runtime requests.
  * Notes: constrains calls to a configured base URL and applies host-owned auth headers from workspace env.
- * Recent changes: enforces GET-only CRM read routes and ignores tool-supplied auth headers.
+ * Recent changes: re-injects trusted inbound auth using the server-selected header name.
  */
 
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
@@ -15,7 +15,8 @@ const REJECTED_REQUEST_HEADER_NAMES = new Set([
   "authorization",
   "cookie",
   "proxy-authorization",
-  "x-api-key"
+  "x-api-key",
+  "x-google-auth"
 ]);
 const REDACTED_RESPONSE_HEADER_NAMES = new Set([
   "authorization",
@@ -32,6 +33,7 @@ type ApiToolConfig = {
   baseUrl: URL;
   allowedRoutes: ApiRoutePattern[];
   accessToken?: string;
+  authHeader: string;
   authScheme: string;
   securityContext?: string;
   securityContextHeader: string;
@@ -100,6 +102,15 @@ function normalizeBaseUrl(rawBaseUrl: string): URL {
   return baseUrl;
 }
 
+function parseAuthHeader(value: string | undefined): string {
+  const normalizedValue = value?.trim().toLowerCase();
+  if (normalizedValue === "x-google-auth") {
+    return "X-Google-Auth";
+  }
+
+  return "Authorization";
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -163,6 +174,7 @@ export function resolveApiToolConfig(envSource: NodeJS.ProcessEnv): ApiToolConfi
     baseUrl: normalizeBaseUrl(baseUrl),
     allowedRoutes: parseAllowedRoutePatterns(envSource.API_DATA_TOOL_ALLOWED_ROUTES),
     accessToken: trimOptionalString(envSource.API_ACCESS_TOKEN),
+    authHeader: parseAuthHeader(envSource.API_AUTH_HEADER),
     authScheme: trimOptionalString(envSource.API_AUTH_SCHEME) ?? "Bearer",
     securityContext: trimOptionalString(envSource.API_SECURITY_CONTEXT),
     securityContextHeader: trimOptionalString(envSource.API_SECURITY_CONTEXT_HEADER) ?? DEFAULT_SECURITY_CONTEXT_HEADER
@@ -375,7 +387,7 @@ function buildRequestHeaders(config: ApiToolConfig, rawHeaders: unknown): Header
   }
 
   if (config.accessToken) {
-    headers.set("Authorization", `${config.authScheme} ${config.accessToken}`);
+    headers.set(config.authHeader, `${config.authScheme} ${config.accessToken}`);
   }
 
   if (config.securityContext) {

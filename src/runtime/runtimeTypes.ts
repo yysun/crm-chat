@@ -1,7 +1,7 @@
 /*
  * Feature: shared runtime and API types for ai-workspace chat execution.
  * Notes: defines request and event contracts for the server-owned HTTP layer around llm-runtime.
- * Recent changes: removed normal client control over runtime provider/model and sampling policy.
+ * Recent changes: carries the trusted inbound auth header name for data_tool re-injection.
  */
 
 import type { LLMProviderName, LLMToolCall } from "llm-runtime";
@@ -28,6 +28,7 @@ export type RunChatCompletionInput = {
   workspaceRoot: string;
   agentsMd?: string | null;
   accessToken?: string;
+  accessTokenHeader?: string;
   signal?: AbortSignal;
 };
 
