@@ -228,8 +228,24 @@ function encodeSseEvent(event: { event: string; data: string }): Uint8Array {
 }
 
 async function* streamRuntimeEvents(runtimeInput: Parameters<typeof runChatCompletion>[0], env: EnvConfig): AsyncIterable<Uint8Array> {
-  for await (const event of runChatCompletion(runtimeInput, env)) {
-    yield encodeSseEvent(mapRuntimeEvent(event));
+  yield encodeSseEvent({
+    event: "ready",
+    data: "{}"
+  });
+
+  try {
+    for await (const event of runChatCompletion(runtimeInput, env)) {
+      yield encodeSseEvent(mapRuntimeEvent(event));
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown streaming runtime error";
+    yield encodeSseEvent({
+      event: "error",
+      data: JSON.stringify({
+        type: "error",
+        error: message
+      })
+    });
   }
 
   yield encodeSseEvent({
@@ -282,6 +298,11 @@ export async function chat(
       userId = await resolveUserId(authTokens.token, env.apiAuthUrl);
     } catch (error) {
       if (error instanceof UserIdResolutionError) {
+        context.error("user identity resolution failed", {
+          authSource: authTokens.source,
+          apiAuthUrl: env.apiAuthUrl,
+          message: error.message
+        });
         return jsonResponse(401, { error: "Unauthorized" }, request, env);
       }
       throw error;

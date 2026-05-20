@@ -942,17 +942,31 @@ export function applyStreamEvent(progress: StreamProgress, event: ParsedSseEvent
 
 async function readErrorResponse(response: Response): Promise<string> {
   const responseText = await response.text();
+  const statusLabel = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
 
   try {
-    const payload = JSON.parse(responseText) as { error?: unknown };
+    const payload = JSON.parse(responseText) as { error?: unknown; message?: unknown; details?: unknown };
     if (typeof payload.error === "string") {
-      return payload.error;
+      return `${statusLabel}: ${payload.error}`;
+    }
+
+    if (typeof payload.message === "string") {
+      return `${statusLabel}: ${payload.message}`;
     }
   } catch {
     // Fall through to the raw body text.
   }
 
-  return responseText || `Request failed with status ${response.status}`;
+  const trimmedText = responseText.trim();
+  if (!trimmedText) {
+    return `${statusLabel}: empty response body`;
+  }
+
+  const bodyPreview = trimmedText.length > 1000
+    ? `${trimmedText.slice(0, 1000)}...`
+    : trimmedText;
+  return `${statusLabel}${contentType ? ` (${contentType})` : ""}: ${bodyPreview}`;
 }
 
 export function shouldAutoContinue(assistantText: string, sawToolActivity: boolean): boolean {
@@ -1006,29 +1020,13 @@ export async function streamAssistantTurn(
   errorOutput: WritableLike
 ): Promise<StreamTurnResult> {
   const messages = userInput === null ? history : buildTurnMessages(history, userInput);
+  const assistantDisplay = createAssistantPendingDisplay(output);
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   };
 
   if (options.accessToken) {
     headers.Authorization = `Bearer ${options.accessToken}`;
-  }
-
-  const response = await fetch(`${options.baseUrl}/chat`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      stream: true,
-      messages
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorResponse(response));
-  }
-
-  if (!response.body) {
-    throw new Error("Streaming response body is missing");
   }
 
   let progress: StreamProgress = {
@@ -1040,11 +1038,27 @@ export async function streamAssistantTurn(
   let sawToolActivity = false;
   const humanInputRequests: PendingHumanInputRequest[] = [];
   const pendingToolCalls = new Map<string, { name: string; args: unknown }>();
-  const assistantDisplay = createAssistantPendingDisplay(output);
 
   assistantDisplay.start();
 
   try {
+    const response = await fetch(`${options.baseUrl}/chat`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        stream: true,
+        messages
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await readErrorResponse(response));
+    }
+
+    if (!response.body) {
+      throw new Error("Streaming response body is missing");
+    }
+
     for await (const event of readSseEvents(response.body)) {
       const previousText = progress.assistantText;
       progress = applyStreamEvent(progress, event);

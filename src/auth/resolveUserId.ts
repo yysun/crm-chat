@@ -11,12 +11,20 @@ export class UserIdResolutionError extends Error {
   }
 }
 
+const USER_ID_RESOLUTION_TIMEOUT_MS = 10_000;
+
 export async function resolveUserId(token: string, apiAuthUrl: string): Promise<string> {
   let response: Response;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => {
+    abortController.abort();
+  }, USER_ID_RESOLUTION_TIMEOUT_MS);
+  timeout.unref();
 
   try {
     response = await fetch(apiAuthUrl, {
       method: "GET",
+      signal: abortController.signal,
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -25,6 +33,8 @@ export async function resolveUserId(token: string, apiAuthUrl: string): Promise<
     throw new UserIdResolutionError(
       `Failed to reach user identity API: ${error instanceof Error ? error.message : String(error)}`
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
