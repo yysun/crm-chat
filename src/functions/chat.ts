@@ -198,13 +198,13 @@ export async function chat(
       return jsonResponse(401, { error: "Authorization: Bearer <token> header is required" });
     }
 
-    if (!env.authUserUrl) {
+    if (!env.apiAuthUrl) {
       return jsonResponse(401, { error: "User identity service is not configured" });
     }
 
     let userId: string;
     try {
-      userId = await resolveUserId(token, env.authUserUrl);
+      userId = await resolveUserId(token, env.apiAuthUrl);
     } catch (error) {
       if (error instanceof UserIdResolutionError) {
         return jsonResponse(401, { error: "Unauthorized" });

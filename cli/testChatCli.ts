@@ -1,13 +1,13 @@
 /*
  * Feature: executable entrypoint for the ai-workspace streaming test CLI.
- * Notes: delegates to the reusable CLI implementation so the entrypoint stays tiny and build-friendly.
- * Recent changes: added a developer-facing command for interactive streamed chat testing.
+ * Notes: loads CLI-only environment values before delegating to the reusable CLI implementation.
+ * Recent changes: stopped reading Azure Functions local.settings.json from the CLI.
  */
 
-import { loadLocalSettings } from "./loadLocalSettings.js";
+import { loadCliEnv } from "./loadCliEnv.js";
 import { runStreamingTestCli } from "./streamingTestCli.js";
 
-loadLocalSettings();
+loadCliEnv();
 
 void runStreamingTestCli().catch((error: unknown) => {
   console.error(error);

@@ -1,7 +1,7 @@
 /*
  * Feature: runtime environment configuration parsing for ai-workspace.
  * Notes: applies defaults for port, workspace root, and generic llm-runtime defaults.
- * Recent changes: added authUserUrl for per-user workspace support.
+ * Recent changes: added apiAuthUrl for per-user workspace support.
  */
 
 import path from "node:path";
@@ -28,8 +28,7 @@ export type EnvConfig = {
   anthropicApiKey?: string;
   openAiCompatibleApiKey?: string;
   openAiCompatibleBaseUrl?: string;
-  authUserUrl?: string;
-  apiCliPat?: string;
+  apiAuthUrl?: string;
 };
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
@@ -92,6 +91,26 @@ function parseReasoningEffort(value: string | undefined): ReasoningEffort {
     : "medium";
 }
 
+function resolveApiAuthUrl(source: NodeJS.ProcessEnv): string | undefined {
+  const rawAuthUrl = source.API_AUTH_URL?.trim();
+  if (!rawAuthUrl) {
+    return undefined;
+  }
+
+  if (/^https?:\/\//i.test(rawAuthUrl)) {
+    return rawAuthUrl;
+  }
+
+  const base = source.API_BASE_URL?.trim();
+  if (!base) {
+    return undefined;
+  }
+
+  const normalizedBase = base.replace(/\/+$/, "");
+  const normalizedPath = rawAuthUrl.startsWith("/") ? rawAuthUrl : `/${rawAuthUrl}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
   return {
     port: parsePort(source.PORT),
@@ -114,14 +133,6 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     anthropicApiKey: source.ANTHROPIC_API_KEY,
     openAiCompatibleApiKey: source.OPENAI_COMPATIBLE_API_KEY,
     openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined,
-    authUserUrl: (() => {
-      const base = source.API_BASE_URL?.trim();
-      const authPath = source.AUTH_USER_PATH?.trim();
-      if (!base || !authPath) return undefined;
-      const normalizedBase = base.replace(/\/+$/, "");
-      const normalizedPath = authPath.startsWith("/") ? authPath : `/${authPath}`;
-      return `${normalizedBase}${normalizedPath}`;
-    })(),
-    apiCliPat: source.API_CLI_PAT?.trim() || undefined
+    apiAuthUrl: resolveApiAuthUrl(source)
   };
 }

@@ -22,12 +22,11 @@ import {
 
 export type CliOptions = {
   baseUrl: string;
-  model: string;
+  accessToken?: string;
   autoContinue: boolean;
   autoContinueMessage: string;
   autoContinueTurns: number;
   traceMode: TraceMode;
-  accessToken?: string;
 };
 
 export {
@@ -657,11 +656,15 @@ export function isReadlineExitError(error: unknown): boolean {
 }
 
 export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOptions {
-  const rawBaseUrl = readFlagValue(args, "--url")
-    ?? env.CRM_CHAT_BASE_URL
+  const rawBaseUrl = readFlagValue(args, "--chat-base-url")
+    ?? readFlagValue(args, "--url")
+    ?? env.CHAT_BASE_URL
     ?? env.AI_WORKSPACE_BASE_URL
-    ?? "http://localhost:7071";
-  const rawModel = readFlagValue(args, "--model") ?? env.AI_WORKSPACE_MODEL ?? "default";
+    ?? "http://localhost:7072";
+  const rawAccessToken = readFlagValue(args, "--bearer-token")
+    ?? readFlagValue(args, "--api-pat")
+    ?? env.CHAT_BEARER_TOKEN
+    ?? env.API_PAT;
   const rawAutoContinueMessage = readFlagValue(args, "--auto-continue-message")
     ?? env.AI_WORKSPACE_AUTO_CONTINUE_MESSAGE
     ?? "go ahead";
@@ -671,12 +674,11 @@ export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOp
 
   return {
     baseUrl: trimTrailingSlashes(rawBaseUrl.trim()),
-    model: rawModel.trim() || "default",
+    accessToken: rawAccessToken?.trim() || undefined,
     autoContinue: readBooleanFlag(args, "--auto-continue") || isTruthy(env.AI_WORKSPACE_AUTO_CONTINUE),
     autoContinueMessage: rawAutoContinueMessage.trim() || "go ahead",
     autoContinueTurns,
-    traceMode: resolveTraceMode(args),
-    accessToken: env.API_CLI_PAT?.trim() || undefined
+    traceMode: resolveTraceMode(args)
   };
 }
 
@@ -1004,14 +1006,18 @@ export async function streamAssistantTurn(
   errorOutput: WritableLike
 ): Promise<StreamTurnResult> {
   const messages = userInput === null ? history : buildTurnMessages(history, userInput);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+
+  if (options.accessToken) {
+    headers.Authorization = `Bearer ${options.accessToken}`;
+  }
+
   const response = await fetch(`${options.baseUrl}/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.accessToken ? { "Authorization": `Bearer ${options.accessToken}` } : {})
-    },
+    headers,
     body: JSON.stringify({
-      model: options.model,
       stream: true,
       messages
     })
@@ -1184,6 +1190,10 @@ export async function streamAssistantTurn(
 
 export async function runStreamingTestCli(args = process.argv.slice(2)): Promise<void> {
   const options = resolveCliOptions(args, process.env);
+  if (!options.accessToken) {
+    throw new Error("CLI auth token is required. Set API_PAT or CHAT_BEARER_TOKEN in cli/.env.");
+  }
+
   const readline = createInterface({
     input: stdin,
     output: stdout
@@ -1191,7 +1201,6 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
   let history: ChatMessage[] = [];
 
   stdout.write(`Streaming test CLI connected to ${options.baseUrl}\n`);
-  stdout.write(`Model: ${options.model}\n`);
   if (options.autoContinue) {
     stdout.write(`Auto-continue: ${options.autoContinueMessage} (${options.autoContinueTurns} max per prompt)\n`);
   }

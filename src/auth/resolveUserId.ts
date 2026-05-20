@@ -1,6 +1,6 @@
 /*
  * Feature: user ID resolution via a configurable identity API for multi-user workspace routing.
- * Notes: exchanges a Bearer access token for a user ID by calling AUTH_USER_URL. Accepts { id }, { userId }, or [{ userId }] responses.
+ * Notes: exchanges a Bearer access token for a user ID by calling API_AUTH_URL. Accepts { id }, { userId }, or [{ userId }] responses.
  * Recent changes: initial implementation for multi-user chat support.
  */
 
@@ -11,11 +11,11 @@ export class UserIdResolutionError extends Error {
   }
 }
 
-export async function resolveUserId(token: string, authUserUrl: string): Promise<string> {
+export async function resolveUserId(token: string, apiAuthUrl: string): Promise<string> {
   let response: Response;
 
   try {
-    response = await fetch(authUserUrl, {
+    response = await fetch(apiAuthUrl, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`

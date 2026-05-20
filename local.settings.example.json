@@ -1,0 +1,28 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "WORKSPACE_ROOT": "./crm-ai-workspace",
+    "API_BASE_URL": "http://localhost:4280",
+    "API_AUTH_URL": "/api/data/who",
+    "LLM_PROVIDER": "azure",
+    "LLM_MODEL": "",
+    "LLM_MAXTOKEN": "",
+    "LLM_TEMPERATURE": "",
+    "LLM_PERMISSION": "auto",
+    "LLM_REASONING": "medium",
+    "LLM_MAX_ITERATIONS": "24",
+    "LLM_MAX_CONSECUTIVE_TOOL_TURNS": "24",
+    "LLM_MAX_WALL_TIME_MS": "900000",
+    "OPENAI_API_KEY": "",
+    "AZURE_OPENAI_API_KEY": "replace-with-azure-openai-api-key",
+    "AZURE_OPENAI_RESOURCE_NAME": "replace-with-azure-openai-resource-name",
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "replace-with-azure-openai-deployment-name",
+    "AZURE_OPENAI_API_VERSION": "2024-10-21",
+    "GOOGLE_API_KEY": "",
+    "ANTHROPIC_API_KEY": "",
+    "OPENAI_COMPATIBLE_API_KEY": "",
+    "OPENAI_COMPATIBLE_BASE_URL": ""
+  },
+  "ConnectionStrings": {}
+}

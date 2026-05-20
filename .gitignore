@@ -1,6 +1,7 @@
 node_modules/
 dist/
 local.settings.json
+cli/.env
 *.log
 .DS_Store
 tmp/
