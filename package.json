@@ -7,10 +7,10 @@
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf dist",
-    "cli": "tsx cli/testChatCli.ts",
-    "dev": "npm run build && concurrently -k -n tsc,func -c blue,green \"npm run watch\" \"func start\"",
+    "cli": "CRM_CHAT_BASE_URL=http://localhost:7072 tsx cli/testChatCli.ts",
+    "dev": "npm run build && concurrently -k -n tsc,func -c blue,green \"npm run watch\" \"func start --port 7072\"",
     "prestart": "npm run clean && npm run build",
-    "start": "func start"
+    "start": "func start --port 7072"
   },
   "dependencies": {
     "@azure/functions": "^4.7.3",
