@@ -6,6 +6,7 @@
 
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
 import { createHash } from "node:crypto";
+import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync, unzipSync } from "node:zlib";
 
 const API_TOOL_NAME = "data_tool";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
@@ -17,6 +18,9 @@ const REDACTED_RESPONSE_HEADER_NAMES = new Set([
   "set-cookie",
   "set-cookie2"
 ]);
+const BASE64_TEXT_PATTERN = /^[A-Za-z0-9+/=_-]+$/;
+
+type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "br";
 
 type ApiToolConfig = {
   baseUrl: URL;
@@ -328,20 +332,206 @@ function sanitizeResponseHeaders(headers: Headers): Record<string, string> {
   return sanitizedHeaders;
 }
 
+function normalizeCompressionFormat(value: unknown): CompressionFormat | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  if (normalizedValue === "gzip" || normalizedValue === "gz" || normalizedValue === "x-gzip") {
+    return "gzip";
+  }
+
+  if (normalizedValue === "br" || normalizedValue === "brotli") {
+    return "br";
+  }
+
+  if (normalizedValue === "deflate" || normalizedValue === "zlib") {
+    return "deflate";
+  }
+
+  if (normalizedValue === "deflate-raw" || normalizedValue === "raw-deflate") {
+    return "deflate-raw";
+  }
+
+  return null;
+}
+
+function readCompressionFormat(record: Record<string, unknown>): CompressionFormat | null {
+  return normalizeCompressionFormat(record.encoding)
+    ?? normalizeCompressionFormat(record.contentEncoding)
+    ?? normalizeCompressionFormat(record.content_encoding)
+    ?? normalizeCompressionFormat(record.compression)
+    ?? normalizeCompressionFormat(record.compressionFormat)
+    ?? normalizeCompressionFormat(record.compression_format)
+    ?? normalizeCompressionFormat(record.resEncoding)
+    ?? normalizeCompressionFormat(record.res_encoding);
+}
+
+function decompressBuffer(buffer: Buffer, compressionFormat: CompressionFormat): Buffer {
+  if (compressionFormat === "gzip") {
+    return gunzipSync(buffer);
+  }
+
+  if (compressionFormat === "br") {
+    return brotliDecompressSync(buffer);
+  }
+
+  if (compressionFormat === "deflate-raw") {
+    return inflateRawSync(buffer);
+  }
+
+  return inflateSync(buffer);
+}
+
+function tryDecompressBuffer(buffer: Buffer, compressionFormat: CompressionFormat): Buffer | null {
+  try {
+    return decompressBuffer(buffer, compressionFormat);
+  } catch {
+    if (compressionFormat !== "deflate") {
+      return null;
+    }
+
+    try {
+      return inflateRawSync(buffer);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function maybeDecompressTransportBody(buffer: Buffer, contentEncoding: string | null): Buffer {
+  const compressionFormat = normalizeCompressionFormat(contentEncoding);
+  if (compressionFormat) {
+    return tryDecompressBuffer(buffer, compressionFormat) ?? buffer;
+  }
+
+  try {
+    return unzipSync(buffer);
+  } catch {
+    return buffer;
+  }
+}
+
+function decodeBufferText(buffer: Buffer): string {
+  return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+}
+
+async function readResponseText(response: Response): Promise<string> {
+  const responseBody = Buffer.from(await response.arrayBuffer());
+  const decompressedBody = maybeDecompressTransportBody(
+    responseBody,
+    response.headers.get("content-encoding")
+  );
+
+  return decodeBufferText(decompressedBody);
+}
+
+function parseMaybeJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function isBase64Like(value: string): boolean {
+  const normalizedValue = value.trim();
+  return normalizedValue.length > 0
+    && normalizedValue.length % 4 !== 1
+    && BASE64_TEXT_PATTERN.test(normalizedValue);
+}
+
+function readBooleanFlag(record: Record<string, unknown>, ...keys: string[]): boolean {
+  return keys.some((key) => record[key] === true);
+}
+
+function decodeBase64Payload(value: string): Buffer | null {
+  const normalizedValue = value.trim().replace(/-/g, "+").replace(/_/g, "/");
+  if (!isBase64Like(normalizedValue)) {
+    return null;
+  }
+
+  try {
+    const paddedValue = normalizedValue.padEnd(
+      normalizedValue.length + ((4 - normalizedValue.length % 4) % 4),
+      "="
+    );
+    return Buffer.from(paddedValue, "base64");
+  } catch {
+    return null;
+  }
+}
+
+function decompressCompressedResponseEnvelope(record: Record<string, unknown>): Record<string, unknown> {
+  if (typeof record.res !== "string") {
+    return record;
+  }
+
+  const compressionFormat = readCompressionFormat(record);
+  const markedCompressed = readBooleanFlag(
+    record,
+    "compressed",
+    "isCompressed",
+    "is_compressed",
+    "resCompressed",
+    "res_compressed"
+  );
+
+  if (!compressionFormat && !markedCompressed) {
+    return record;
+  }
+
+  const payloadBuffer = decodeBase64Payload(record.res);
+  if (!payloadBuffer) {
+    return record;
+  }
+
+  const decompressedBuffer = compressionFormat
+    ? tryDecompressBuffer(payloadBuffer, compressionFormat)
+    : (() => {
+      try {
+        return unzipSync(payloadBuffer);
+      } catch {
+        return null;
+      }
+    })();
+
+  if (!decompressedBuffer) {
+    return record;
+  }
+
+  return {
+    ...record,
+    res: parseMaybeJson(decodeBufferText(decompressedBuffer))
+  };
+}
+
+function decompressNestedResponseEnvelopes(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(decompressNestedResponseEnvelopes);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = decompressCompressedResponseEnvelope(value as Record<string, unknown>);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, key === "res" ? entry : decompressNestedResponseEnvelopes(entry)])
+  );
+}
+
 function parseResponseBody(rawBody: string, contentType: string | null): unknown {
   if (!rawBody) {
     return "";
   }
 
-  if (contentType?.toLowerCase().includes("application/json")) {
-    try {
-      return JSON.parse(rawBody);
-    } catch {
-      return rawBody;
-    }
+  if (!contentType?.toLowerCase().includes("application/json")) {
+    return rawBody;
   }
 
-  return rawBody;
+  return decompressNestedResponseEnvelopes(parseMaybeJson(rawBody));
 }
 
 async function buildApiResponseResult(
@@ -394,7 +584,7 @@ async function executeApiRequest(
     signal: context?.abortSignal
   });
 
-  const rawBody = await response.text();
+  const rawBody = await readResponseText(response);
   const contentType = response.headers.get("content-type");
   const responseSummary: ApiResponseSummary = {
     ok: response.ok,
