@@ -19,9 +19,11 @@ Facts from source:
 - `API_BASE_URL` must be an absolute `http` or `https` URL.
 - Tool paths must be relative; absolute paths are rejected.
 - Resolved URLs must stay inside the configured origin and base path.
-- Supported tool methods are `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
-- Workspace instructions restrict CRM usage to read routes, even though the tool can technically support more methods.
-- Host-owned `Authorization` and security context headers are applied after model-provided headers.
+- Supported tool methods are code-level GET only.
+- `API_DATA_TOOL_ALLOWED_ROUTES` from local/server settings controls which CRM read routes the tool can call.
+- Raw CRM mutation routes are unreachable from chat because non-GET methods and unlisted paths are rejected before fetch.
+- Tool-provided `Authorization`, cookie, proxy authorization, and API-key headers are ignored.
+- Host-owned `Authorization` and security context headers are applied after accepted model-provided headers.
 - Sensitive response headers such as `authorization`, `cookie`, and `set-cookie` are stripped.
 
 Response handling:

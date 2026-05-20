@@ -1,7 +1,7 @@
 /*
  * Feature: runtime environment configuration parsing for ai-workspace.
  * Notes: applies defaults for port, workspace root, and generic llm-runtime defaults.
- * Recent changes: added apiAuthUrl for per-user workspace support.
+ * Recent changes: parses CRM CORS and data_tool route allowlists from server settings.
  */
 
 import path from "node:path";
@@ -29,6 +29,8 @@ export type EnvConfig = {
   openAiCompatibleApiKey?: string;
   openAiCompatibleBaseUrl?: string;
   apiAuthUrl?: string;
+  crmAllowedOrigins: string[];
+  apiDataToolAllowedRoutes: string[];
 };
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
@@ -67,6 +69,17 @@ function parseOptionalProvider(value: string | undefined): LLMProviderName | und
   return SUPPORTED_PROVIDERS.includes(normalized as LLMProviderName)
     ? normalized as LLMProviderName
     : undefined;
+}
+
+function parseDelimitedList(value: string | undefined): string[] {
+  if (!value?.trim()) {
+    return [];
+  }
+
+  return value
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function parseToolPermission(value: string | undefined): ToolPermission {
@@ -133,6 +146,8 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     anthropicApiKey: source.ANTHROPIC_API_KEY,
     openAiCompatibleApiKey: source.OPENAI_COMPATIBLE_API_KEY,
     openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined,
-    apiAuthUrl: resolveApiAuthUrl(source)
+    apiAuthUrl: resolveApiAuthUrl(source),
+    crmAllowedOrigins: parseDelimitedList(source.CRM_ALLOWED_ORIGINS),
+    apiDataToolAllowedRoutes: parseDelimitedList(source.API_DATA_TOOL_ALLOWED_ROUTES)
   };
 }

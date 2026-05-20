@@ -1,6 +1,7 @@
 /*
  * Feature: Azure Functions adapter for the ai-workspace /chat route.
- * Notes: preserves the source OpenAI-style JSON/SSE contract while removing AIW storage integration.
+ * Notes: validates normal-user chat input, owns runtime policy, and applies CRM-origin CORS.
+ * Recent changes: rejects client privileged roles and ignores client runtime/tool overrides.
  */
 
 import type { HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
@@ -13,6 +14,10 @@ import { loadAgentsMdCache, type LoadedAgentsMd } from "../workspace/loadAgentsM
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type HttpError = Error & { statusCode?: number };
+type IncomingChatMessage = {
+  role: string;
+  content: string;
+};
 
 let agentsMdCachePromise: Promise<LoadedAgentsMd> | undefined;
 let agentsMdCacheWorkspaceRoot: string | undefined;
@@ -46,7 +51,7 @@ function extractBearerToken(request: HttpRequest): string | null {
   return parts[1];
 }
 
-function isChatMessage(value: unknown): value is ChatMessage {
+function isIncomingChatMessage(value: unknown): value is IncomingChatMessage {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -55,7 +60,43 @@ function isChatMessage(value: unknown): value is ChatMessage {
   return typeof candidate.role === "string" && typeof candidate.content === "string";
 }
 
-function parseRequestBody(body: unknown): ChatCompletionRequest {
+function normalizeOrigin(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.replace(/\/+$/, "");
+  }
+}
+
+function resolveAllowedCorsOrigin(request: HttpRequest, env: EnvConfig): string | undefined {
+  const origin = request.headers.get("origin")?.trim();
+  if (!origin) {
+    return undefined;
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  const allowedOrigins = new Set(
+    env.crmAllowedOrigins
+      .filter((entry) => entry !== "*")
+      .map(normalizeOrigin)
+  );
+
+  return allowedOrigins.has(normalizedOrigin) ? normalizedOrigin : undefined;
+}
+
+function createCorsHeaders(request: HttpRequest, env: EnvConfig): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Vary": "Origin"
+  };
+  const allowedOrigin = resolveAllowedCorsOrigin(request, env);
+  if (allowedOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowedOrigin;
+  }
+
+  return headers;
+}
+
+export function parseRequestBody(body: unknown): ChatCompletionRequest {
   if (typeof body !== "object" || body === null) {
     throw createHttpError("Request body must be a JSON object", 400);
   }
@@ -65,21 +106,31 @@ function parseRequestBody(body: unknown): ChatCompletionRequest {
     throw createHttpError("messages must be a non-empty array", 400);
   }
 
-  if (!candidate.messages.every(isChatMessage)) {
+  if (!candidate.messages.every(isIncomingChatMessage)) {
     throw createHttpError("messages must contain role and content strings", 400);
   }
 
+  const messages = candidate.messages as IncomingChatMessage[];
+  for (const message of messages) {
+    if (message.role === "system") {
+      throw createHttpError("client-supplied system messages are not accepted", 400);
+    }
+
+    if (message.role === "tool") {
+      throw createHttpError("client-supplied tool messages are not accepted", 400);
+    }
+
+    if (message.role !== "user" && message.role !== "assistant") {
+      throw createHttpError("messages may only use user or assistant roles", 400);
+    }
+  }
+
   return {
-    model: typeof candidate.model === "string" ? candidate.model : undefined,
-    messages: candidate.messages,
-    stream: typeof candidate.stream === "boolean" ? candidate.stream : undefined,
-    temperature: typeof candidate.temperature === "number" ? candidate.temperature : undefined,
-    max_tokens: typeof candidate.max_tokens === "number" ? candidate.max_tokens : undefined,
-    tools: Array.isArray(candidate.tools) ? candidate.tools : undefined,
-    tool_choice: candidate.tool_choice,
-    metadata: typeof candidate.metadata === "object" && candidate.metadata !== null
-      ? (candidate.metadata as Record<string, unknown>)
-      : undefined
+    messages: messages.map((message) => ({
+      role: message.role as ChatMessage["role"],
+      content: message.content
+    })),
+    stream: typeof candidate.stream === "boolean" ? candidate.stream : undefined
   };
 }
 
@@ -162,24 +213,22 @@ async function* streamRuntimeEvents(runtimeInput: Parameters<typeof runChatCompl
   });
 }
 
-function emptyOptionsResponse(): HttpResponseInit {
+function emptyOptionsResponse(request: HttpRequest, env: EnvConfig): HttpResponseInit {
   return {
     status: 204,
     headers: {
-      "Access-Control-Allow-Origin": "*",
+      ...createCorsHeaders(request, env),
       "Access-Control-Allow-Headers": "authorization, content-type",
       "Access-Control-Allow-Methods": "POST, OPTIONS"
     }
   };
 }
 
-function jsonResponse(status: number, body: unknown): HttpResponseInit {
+function jsonResponse(status: number, body: unknown, request: HttpRequest, env: EnvConfig): HttpResponseInit {
   return {
     status,
     jsonBody: body,
-    headers: {
-      "Access-Control-Allow-Origin": "*"
-    }
+    headers: createCorsHeaders(request, env)
   };
 }
 
@@ -187,19 +236,20 @@ export async function chat(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
+  const env = loadEnv(process.env);
+
   try {
     if (request.method.toUpperCase() === "OPTIONS") {
-      return emptyOptionsResponse();
+      return emptyOptionsResponse(request, env);
     }
 
-    const env = loadEnv(process.env);
     const token = extractBearerToken(request);
     if (!token) {
-      return jsonResponse(401, { error: "Authorization: Bearer <token> header is required" });
+      return jsonResponse(401, { error: "Authorization: Bearer <token> header is required" }, request, env);
     }
 
     if (!env.apiAuthUrl) {
-      return jsonResponse(401, { error: "User identity service is not configured" });
+      return jsonResponse(401, { error: "User identity service is not configured" }, request, env);
     }
 
     let userId: string;
@@ -207,7 +257,7 @@ export async function chat(
       userId = await resolveUserId(token, env.apiAuthUrl);
     } catch (error) {
       if (error instanceof UserIdResolutionError) {
-        return jsonResponse(401, { error: "Unauthorized" });
+        return jsonResponse(401, { error: "Unauthorized" }, request, env);
       }
       throw error;
     }
@@ -227,12 +277,8 @@ export async function chat(
     context.log(`[chat] userId=${userId}`);
 
     const runtimeInput = {
-      model: chatRequest.model,
       messages: chatRequest.messages,
       stream: chatRequest.stream === true,
-      temperature: chatRequest.temperature,
-      maxTokens: chatRequest.max_tokens,
-      metadata: chatRequest.metadata,
       userId,
       workspaceRoot,
       agentsMd: agentsMdCache.content,
@@ -245,7 +291,7 @@ export async function chat(
         status: 200,
         body: streamRuntimeEvents(runtimeInput, env),
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          ...createCorsHeaders(request, env),
           "Cache-Control": "no-cache, no-transform",
           "Connection": "keep-alive",
           "Content-Type": "text/event-stream; charset=utf-8"
@@ -258,8 +304,8 @@ export async function chat(
       events.push(event);
     }
 
-    const response = aggregateResponse(chatRequest.model ?? "default", events);
-    return jsonResponse(response.statusCode, response.body);
+    const response = aggregateResponse(env.llmModel ?? "server-configured", events);
+    return jsonResponse(response.statusCode, response.body, request, env);
   } catch (error) {
     const statusCode = resolveErrorStatusCode(error);
     const message = error instanceof Error ? error.message : "Internal server error";
@@ -270,6 +316,6 @@ export async function chat(
       message
     });
 
-    return jsonResponse(statusCode, { error: message });
+    return jsonResponse(statusCode, { error: message }, request, env);
   }
 }

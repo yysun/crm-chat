@@ -1,7 +1,7 @@
 /*
  * Feature: workspace-configured outbound API tool for llm-runtime requests.
  * Notes: constrains calls to a configured base URL and applies host-owned auth headers from workspace env.
- * Recent changes: supports opt-in GET response caching in process memory.
+ * Recent changes: enforces GET-only CRM read routes and ignores tool-supplied auth headers.
  */
 
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
@@ -10,7 +10,13 @@ import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync, unzipSyn
 
 const API_TOOL_NAME = "data_tool";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
-const SUPPORTED_API_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const SUPPORTED_API_METHODS = new Set(["GET"]);
+const REJECTED_REQUEST_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "x-api-key"
+]);
 const REDACTED_RESPONSE_HEADER_NAMES = new Set([
   "authorization",
   "cookie",
@@ -24,10 +30,16 @@ type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "br";
 
 type ApiToolConfig = {
   baseUrl: URL;
+  allowedRoutes: ApiRoutePattern[];
   accessToken?: string;
   authScheme: string;
   securityContext?: string;
   securityContextHeader: string;
+};
+
+type ApiRoutePattern = {
+  pathnamePattern: RegExp;
+  requiredQueryKeys: string[];
 };
 
 type ApiResponseSummary = {
@@ -57,6 +69,17 @@ function trimOptionalString(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function parseDelimitedList(value: string | undefined): string[] {
+  if (!value?.trim()) {
+    return [];
+  }
+
+  return value
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function normalizeBaseUrl(rawBaseUrl: string): URL {
   let baseUrl: URL;
 
@@ -77,6 +100,59 @@ function normalizeBaseUrl(rawBaseUrl: string): URL {
   return baseUrl;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeRoutePathname(pathname: string): string {
+  if (pathname !== "/" && pathname.endsWith("/")) {
+    return pathname.replace(/\/+$/, "");
+  }
+
+  return pathname;
+}
+
+function compileRoutePathnamePattern(pathname: string): RegExp {
+  const normalizedPathname = normalizeRoutePathname(pathname);
+  const segments = normalizedPathname.split("/").map((segment) => {
+    if (segment.startsWith(":") && segment.length > 1) {
+      return "[^/]+";
+    }
+
+    if (segment === "*") {
+      return ".*";
+    }
+
+    return escapeRegExp(segment);
+  });
+
+  return new RegExp(`^${segments.join("/")}$`);
+}
+
+function parseAllowedRoutePattern(entry: string): ApiRoutePattern | null {
+  const methodMatch = entry.match(/^([a-z]+)\s+(.+)$/i);
+  if (methodMatch && methodMatch[1].toUpperCase() !== "GET") {
+    return null;
+  }
+
+  const withoutMethod = (methodMatch ? methodMatch[2] : entry).trim();
+  if (!withoutMethod || /^[a-z][a-z0-9+.-]*:/i.test(withoutMethod)) {
+    return null;
+  }
+
+  const parsedRoute = new URL(withoutMethod, "http://data-tool.local");
+  return {
+    pathnamePattern: compileRoutePathnamePattern(parsedRoute.pathname),
+    requiredQueryKeys: Array.from(parsedRoute.searchParams.keys())
+  };
+}
+
+function parseAllowedRoutePatterns(value: string | undefined): ApiRoutePattern[] {
+  return parseDelimitedList(value)
+    .map(parseAllowedRoutePattern)
+    .filter((entry): entry is ApiRoutePattern => entry !== null);
+}
+
 export function resolveApiToolConfig(envSource: NodeJS.ProcessEnv): ApiToolConfig | null {
   const baseUrl = trimOptionalString(envSource.API_BASE_URL);
   if (!baseUrl) {
@@ -85,6 +161,7 @@ export function resolveApiToolConfig(envSource: NodeJS.ProcessEnv): ApiToolConfi
 
   return {
     baseUrl: normalizeBaseUrl(baseUrl),
+    allowedRoutes: parseAllowedRoutePatterns(envSource.API_DATA_TOOL_ALLOWED_ROUTES),
     accessToken: trimOptionalString(envSource.API_ACCESS_TOKEN),
     authScheme: trimOptionalString(envSource.API_AUTH_SCHEME) ?? "Bearer",
     securityContext: trimOptionalString(envSource.API_SECURITY_CONTEXT),
@@ -95,7 +172,7 @@ export function resolveApiToolConfig(envSource: NodeJS.ProcessEnv): ApiToolConfi
 function parseMethod(value: unknown): string {
   const method = typeof value === "string" ? value.trim().toUpperCase() : "";
   if (!SUPPORTED_API_METHODS.has(method)) {
-    throw new Error(`data tool requires one of: ${Array.from(SUPPORTED_API_METHODS).join(", ")}`);
+    throw new Error("data tool only supports GET requests");
   }
 
   return method;
@@ -266,13 +343,33 @@ export function resolveApiRequestUrl(baseUrl: URL, relativePath: string, query: 
   return resolvedUrl;
 }
 
+function assertAllowedRoute(config: ApiToolConfig, method: string, url: URL): void {
+  if (method !== "GET") {
+    throw new Error("data tool only supports GET requests");
+  }
+
+  const normalizedPathname = normalizeRoutePathname(url.pathname);
+  const matchedRoute = config.allowedRoutes.some((route) => {
+    if (!route.pathnamePattern.test(normalizedPathname)) {
+      return false;
+    }
+
+    return route.requiredQueryKeys.every((key) => url.searchParams.has(key));
+  });
+
+  if (!matchedRoute) {
+    throw new Error("data tool route is not allowlisted");
+  }
+}
+
 function buildRequestHeaders(config: ApiToolConfig, rawHeaders: unknown): Headers {
   const headers = new Headers();
 
   if (rawHeaders && typeof rawHeaders === "object" && !Array.isArray(rawHeaders)) {
     for (const [key, value] of Object.entries(rawHeaders as Record<string, unknown>)) {
-      if (typeof value === "string") {
-        headers.set(key, value);
+      const headerName = key.trim();
+      if (headerName && typeof value === "string" && !REJECTED_REQUEST_HEADER_NAMES.has(headerName.toLowerCase())) {
+        headers.set(headerName, value);
       }
     }
   }
@@ -556,6 +653,7 @@ async function executeApiRequest(
   const method = parseMethod(args.method);
   const requestPath = parsePath(args.path);
   const url = resolveApiRequestUrl(config.baseUrl, requestPath, args.query);
+  assertAllowedRoute(config, method, url);
   const headers = buildRequestHeaders(config, args.headers);
   const body = serializeRequestBody(method, args.body, headers);
   const cacheTtlMs = parseCacheTtlMs(args.cacheTtlMs, method);
@@ -628,7 +726,7 @@ export function createApiRequestTool(options: {
 
   return {
     name: API_TOOL_NAME,
-    description: "Call the workspace-configured API using a path relative to API_BASE_URL. Host-owned auth and security headers are applied automatically. Responses are returned inline. GET requests can opt into in-memory caching with cacheTtlMs.",
+    description: "Read the workspace-configured CRM API using GET paths allowed by API_DATA_TOOL_ALLOWED_ROUTES. Host-owned auth and security headers are applied automatically. Responses are returned inline. Successful responses can opt into in-memory caching with cacheTtlMs.",
     evidenceKind: "external_action",
     parameters: {
       type: "object",
@@ -636,7 +734,7 @@ export function createApiRequestTool(options: {
       properties: {
         method: {
           type: "string",
-          description: "HTTP method to use.",
+          description: "HTTP method to use. Only GET is supported.",
           enum: Array.from(SUPPORTED_API_METHODS)
         },
         path: {
@@ -650,13 +748,10 @@ export function createApiRequestTool(options: {
         },
         headers: {
           type: "object",
-          description: "Optional additional request headers. Host-owned auth headers override conflicting values.",
+          description: "Optional additional request headers. Authorization and other sensitive auth headers are ignored because host-owned auth is always applied.",
           additionalProperties: {
             type: "string"
           }
-        },
-        body: {
-          description: "Optional JSON-serializable body value or raw string payload."
         },
         cacheTtlMs: {
           type: "number",

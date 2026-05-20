@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
- * Recent changes: disables shell and file-system built-ins.
+ * Recent changes: makes provider/model and sampling policy server-owned for normal chat callers.
  */
 
 import type {
@@ -27,10 +27,6 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Do not reveal secret values."
 ].join(" ");
 
-function isProviderName(value: string): value is LLMProviderName {
-  return SUPPORTED_PROVIDERS.includes(value as LLMProviderName);
-}
-
 function configuredProvidersFromEnv(env: EnvConfig): LLMProviderName[] {
   const providers: LLMProviderName[] = [];
 
@@ -55,33 +51,6 @@ function configuredProvidersFromEnv(env: EnvConfig): LLMProviderName[] {
   }
 
   return providers;
-}
-
-function parseProviderPrefixedModel(model: string | undefined): ResolvedRuntimeTarget | null {
-  if (!model) {
-    return null;
-  }
-
-  const matched = model.match(/^([a-z-]+)[:/](.+)$/i);
-  if (!matched) {
-    return null;
-  }
-
-  const provider = matched[1].toLowerCase();
-  const resolvedModel = matched[2].trim();
-  if (!isProviderName(provider) || !resolvedModel) {
-    return null;
-  }
-
-  return {
-    provider,
-    model: resolvedModel
-  };
-}
-
-function getMetadataProvider(metadata: Record<string, unknown> | undefined): LLMProviderName | null {
-  const provider = metadata?.provider;
-  return typeof provider === "string" && isProviderName(provider) ? provider : null;
 }
 
 function fallbackModelForProvider(provider: LLMProviderName): string {
@@ -132,22 +101,9 @@ export function createEnvironmentOptions(env: EnvConfig, workspaceRoot: string):
 }
 
 export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConfig): ResolvedRuntimeTarget {
-  const prefixedModel = parseProviderPrefixedModel(input.model);
-  const metadataProvider = getMetadataProvider(input.metadata);
-
-  if (prefixedModel && metadataProvider && prefixedModel.provider !== metadataProvider) {
-    throw new Error("Request provider is ambiguous between metadata.provider and model prefix");
-  }
-
-  if (prefixedModel) {
-    return prefixedModel;
-  }
-
   const configuredProviders = configuredProvidersFromEnv(env);
-  const provider = metadataProvider ?? env.llmProvider ?? configuredProviders[0] ?? "openai";
-  const model = !input.model || input.model === "default"
-    ? env.llmModel ?? fallbackModelForProvider(provider)
-    : input.model;
+  const provider = env.llmProvider ?? configuredProviders[0] ?? "openai";
+  const model = env.llmModel ?? fallbackModelForProvider(provider);
 
   return {
     provider,
@@ -171,7 +127,7 @@ export function createBuiltInSelection(): BuiltInToolSelection {
 }
 
 export function resolveMaxTokens(input: RunChatCompletionInput, env: EnvConfig): number | undefined {
-  return input.maxTokens ?? env.llmMaxToken;
+  return env.llmMaxToken;
 }
 
 export function resolveMaxIterations(env: EnvConfig): number | undefined {
@@ -179,7 +135,7 @@ export function resolveMaxIterations(env: EnvConfig): number | undefined {
 }
 
 export function resolveTemperature(input: RunChatCompletionInput, env: EnvConfig): number | undefined {
-  return input.temperature ?? env.llmTemperature;
+  return env.llmTemperature;
 }
 
 export function describeRuntimeDefaults(env: EnvConfig): {

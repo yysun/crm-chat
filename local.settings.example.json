@@ -5,6 +5,8 @@
     "WORKSPACE_ROOT": "./crm-ai-workspace",
     "API_BASE_URL": "http://localhost:4280",
     "API_AUTH_URL": "/api/data/who",
+    "CRM_ALLOWED_ORIGINS": "http://localhost:4280,http://localhost:5173",
+    "API_DATA_TOOL_ALLOWED_ROUTES": "GET /api/data/who,GET /api/data/accounts/:id,GET /api/data/accounts/:id/contacts,GET /api/data/accounts/:id/notes,GET /api/data/actions,GET /api/data/contacts/searchAll,GET /api/data/contacts/:id,GET /api/data/contacts/:id/notes",
     "LLM_PROVIDER": "azure",
     "LLM_MODEL": "",
     "LLM_MAXTOKEN": "",

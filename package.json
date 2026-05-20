@@ -7,6 +7,7 @@
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf dist",
+    "test": "node --import tsx --test tests/*.test.ts",
     "cli": "tsx cli/testChatCli.ts",
     "dev": "npm run build && concurrently -k -n tsc,func -c blue,green \"npm run watch\" \"func start --port 7072\"",
     "prestart": "npm run clean && npm run build",

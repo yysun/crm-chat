@@ -2,7 +2,7 @@
 
 Azure Functions adapter for a CRM-aware chat runtime. It exposes a `/chat` endpoint with an OpenAI-style request shape, loads workspace instructions from `crm-ai-workspace/AGENTS.md`, and gives the model one host-owned API tool for CRM data access.
 
-The important boundary: the model does not get filesystem, shell, or web-fetch access. CRM reads go through `data_tool`, which calls `API_BASE_URL` with server-controlled auth and security headers.
+The important boundary: the model does not get filesystem, shell, or web-fetch access. CRM reads go through `data_tool`, which only permits configured GET routes under `API_BASE_URL` with server-controlled auth and security headers.
 
 ## What It Does
 
@@ -11,7 +11,7 @@ The important boundary: the model does not get filesystem, shell, or web-fetch a
 - Supports streamed Server-Sent Events and aggregate JSON responses.
 - Resolves the caller from a bearer token through the configured CRM identity endpoint.
 - Appends `crm-ai-workspace/AGENTS.md` to the runtime system prompt.
-- Exposes `data_tool` for CRM API calls under `API_BASE_URL`.
+- Exposes `data_tool` for allowlisted CRM read routes under `API_BASE_URL`.
 - Redacts known secret values from emitted tool events.
 
 ## Requirements
@@ -38,6 +38,8 @@ Required server settings for normal CRM chat:
 | --- | --- |
 | `API_BASE_URL` | Base URL for CRM API calls. |
 | `API_AUTH_URL` | Identity endpoint used to resolve the current user from the caller token; accepts an absolute URL or a path under `API_BASE_URL`. |
+| `API_DATA_TOOL_ALLOWED_ROUTES` | Comma, semicolon, or newline separated GET route allowlist for `data_tool`, for example `GET /api/data/accounts/:id`. |
+| `CRM_ALLOWED_ORIGINS` | Comma, semicolon, or newline separated browser origins allowed to call `/chat`. No wildcard is emitted. |
 | `WORKSPACE_ROOT` | Workspace directory containing `AGENTS.md`; for this repo use `crm-ai-workspace`. |
 
 Configure at least one LLM provider:
@@ -153,7 +155,7 @@ Request:
 }
 ```
 
-Provider and model selection are server policy. Configure them with `LLM_PROVIDER` and `LLM_MODEL` in the server environment, not from the CLI.
+Provider, model, temperature, max-token, and tool selection are server policy. Configure them in the server environment, not from the CLI or browser. Client-supplied `system` and `tool` messages are rejected; client-supplied `tools` and `tool_choice` are ignored.
 
 ## Response Modes
 
@@ -176,7 +178,7 @@ Runtime behavior depends on [crm-ai-workspace/AGENTS.md](./crm-ai-workspace/AGEN
 - Use `data_tool` for CRM data.
 - Keep calls relative to `API_BASE_URL`.
 - Let the host own authorization.
-- Use read routes only.
+- Use configured GET read routes only.
 - Do not invent data when API responses fail or do not match expectations.
 
 The function caches the loaded `AGENTS.md` content per workspace root.
@@ -185,6 +187,6 @@ The function caches the loaded `AGENTS.md` content per workspace root.
 
 - Source lives under `src/`; compiled output goes to `dist/`.
 - `host.json` sets `routePrefix` to an empty string, so the local route is `/chat`, not `/api/chat`.
-- `data_tool` can cache successful GET responses in process memory when the model supplies `cacheTtlMs`.
+- `data_tool` can cache successful allowlisted GET responses in process memory when the model supplies `cacheTtlMs`.
 - Built-in runtime tools for shell, filesystem, web fetch, and skill loading are disabled in `src/runtime/runtimeConfig.ts`.
 - `local.settings.json` and `cli/.env` are intentionally gitignored; commit only `local.settings.example.json` and `cli/.env.example`.
