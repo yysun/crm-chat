@@ -1,0 +1,5 @@
+node_modules/
+dist/
+local.settings.json
+*.log
+.DS_Store
