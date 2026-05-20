@@ -5,3 +5,4 @@ node_modules/.cache/
 local.settings.json
 .git*
 .vscode/
+cli/

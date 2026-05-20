@@ -274,9 +274,7 @@ export async function* runChatCompletion(
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
       model: runtimeTarget.model,
-      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd, {
-        userId: input.userId
-      }),
+      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
       temperature: resolveTemperature(input, env),
       maxTokens: resolveMaxTokens(input, env),
       maxIterations,

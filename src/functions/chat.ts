@@ -3,7 +3,6 @@
  * Notes: preserves the source OpenAI-style JSON/SSE contract while removing AIW storage integration.
  */
 
-import { mkdir } from "node:fs/promises";
 import type { HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { resolveUserId, UserIdResolutionError } from "../auth/resolveUserId.js";
 import { loadEnv, type EnvConfig } from "../config/env.js";
@@ -11,19 +10,12 @@ import { runChatCompletion } from "../runtime/runChatCompletion.js";
 import type { ChatCompletionRequest, ChatMessage, RuntimeEvent } from "../runtime/runtimeTypes.js";
 import { mapRuntimeEvent } from "../sse/mapRuntimeEvent.js";
 import { loadAgentsMdCache, type LoadedAgentsMd } from "../workspace/loadAgentsMd.js";
-import { resolveUserWorkspaceRoot, resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
+import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type HttpError = Error & { statusCode?: number };
 
 let agentsMdCachePromise: Promise<LoadedAgentsMd> | undefined;
 let agentsMdCacheWorkspaceRoot: string | undefined;
-
-function isNotDirectoryError(error: unknown): boolean {
-  return typeof error === "object"
-    && error !== null
-    && "code" in error
-    && error.code === "ENOTDIR";
-}
 
 function createHttpError(message: string, statusCode: number): HttpError {
   const error = new Error(message) as HttpError;
@@ -229,19 +221,10 @@ export async function chat(
 
     const chatRequest = parseRequestBody(rawBody);
     const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
-    const userDataRoot = resolveUserWorkspaceRoot(workspaceRoot, userId);
     const agentsMdCache = await getAgentsMdCache(workspaceRoot);
     const abortController = new AbortController();
 
     context.log(`[chat] userId=${userId}`);
-
-    try {
-      await mkdir(userDataRoot, { recursive: true });
-    } catch (error) {
-      if (!isNotDirectoryError(error)) {
-        throw error;
-      }
-    }
 
     const runtimeInput = {
       model: chatRequest.model,

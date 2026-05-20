@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
- * Recent changes: migrated without AIW storage tools, so llm-runtime file built-ins stay enabled.
+ * Recent changes: disables shell and file-system built-ins.
  */
 
 import type {
@@ -15,28 +15,16 @@ import type {
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import type { ChatMessage, ResolvedRuntimeTarget, RunChatCompletionInput } from "./runtimeTypes.js";
-import { sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
 
-type RuntimeUserContext = {
-  userId: string;
-};
-
 const DEFAULT_SYSTEM_PROMPT = [
   "You are a workspace agent running inside ai-workspace.",
-  "Help the user by inspecting the workspace, using available tools when needed, and answering from the files and context you can access.",
-  "Prefer workspace evidence over speculation whenever the answer depends on files, configuration, environment variables, logs, generated outputs, or repository state.",
-  "For read-only tasks such as inspecting, searching, summarizing, and analyzing workspace content, proceed without asking for confirmation.",
-  "Use available read-only tools before asking the user for information that may already exist in the workspace.",
+  "Help the user using the messages and context provided in the request.",
+  "Do not claim to inspect local files, configuration, environment variables, logs, generated outputs, or repository state.",
   "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from AGENTS.md.",
-  "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
-  "If an external API or network lookup is required, use an available tool instead of narrating intent.",
-  "Prefer `shell_cmd` for authenticated API work only when workspace instructions explicitly require `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
-  "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
-  "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",
-  "Ask for clarification only when required information is still missing after inspection or the user requests a destructive, modifying, external, or irreversible action.",
-  "Do not reveal secret values unless the user explicitly asks to inspect the file contents; otherwise report only presence, absence, or other non-sensitive metadata."
+  "Ask for clarification when required information is missing or the user requests a destructive, modifying, external, or irreversible action.",
+  "Do not reveal secret values."
 ].join(" ");
 
 function isProviderName(value: string): value is LLMProviderName {
@@ -169,16 +157,16 @@ export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConf
 
 export function createBuiltInSelection(): BuiltInToolSelection {
   return {
-    shell_cmd: true,
+    shell_cmd: false,
     web_fetch: false,
     load_skill: false,
     ask_user_input: true,
-    read_file: true,
-    write_file: true,
-    list_files: true,
-    search_files: true,
-    create_directory: true,
-    path_exists: true
+    read_file: false,
+    write_file: false,
+    list_files: false,
+    search_files: false,
+    create_directory: false,
+    path_exists: false
   };
 }
 
@@ -212,20 +200,8 @@ export function describeRuntimeDefaults(env: EnvConfig): {
   };
 }
 
-export function composeSystemPrompt(
-  agentsMd: string | null | undefined,
-  runtimeUserContext?: RuntimeUserContext
-): string {
+export function composeSystemPrompt(agentsMd: string | null | undefined): string {
   const sections = [DEFAULT_SYSTEM_PROMPT];
-
-  if (runtimeUserContext) {
-    const userRoot = `users/${sanitizeUserIdForPath(runtimeUserContext.userId)}`;
-    sections.push([
-      "Runtime user context:",
-      `- User ID: ${runtimeUserContext.userId}`,
-      `- User Root: ${userRoot}`
-    ].join("\n"));
-  }
 
   if (agentsMd?.trim()) {
     sections.push(`Additional workspace instructions:\n${agentsMd.trim()}`);
@@ -246,13 +222,12 @@ function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {
 
 export function buildRuntimeMessages(
   messages: ChatMessage[],
-  agentsMd: string | null,
-  runtimeUserContext?: RuntimeUserContext
+  agentsMd: string | null
 ): LLMChatMessage[] {
   return [
     {
       role: "system",
-      content: composeSystemPrompt(agentsMd, runtimeUserContext)
+      content: composeSystemPrompt(agentsMd)
     },
     ...toLlmMessages(messages)
   ];

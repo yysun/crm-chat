@@ -8,6 +8,7 @@
     "watch": "tsc -w",
     "clean": "rimraf dist",
     "cli": "tsx cli/testChatCli.ts",
+    "dev": "npm run build && concurrently -k -n tsc,func -c blue,green \"npm run watch\" \"func start\"",
     "prestart": "npm run clean && npm run build",
     "start": "func start"
   },
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "concurrently": "^9.2.1",
     "rimraf": "^6.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2"
