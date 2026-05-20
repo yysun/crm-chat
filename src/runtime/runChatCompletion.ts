@@ -8,9 +8,11 @@ import {
   createRuntime,
   type LLMChatMessage,
   type LLMRuntime,
-  type LLMToolCall
+  type LLMToolCall,
+  type LLMToolDefinition
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
+import { createApiRequestTool } from "../tools/dataTool.js";
 import {
   buildRuntimeMessages,
   createBuiltInSelection,
@@ -270,6 +272,8 @@ export async function* runChatCompletion(
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
     const maxIterations = resolveMaxIterations(env) ?? DEFAULT_MAX_ITERATIONS;
+    const apiRequestTool = createApiRequestTool({ envSource: requestEnv });
+    const extraTools: LLMToolDefinition[] = apiRequestTool ? [apiRequestTool] : [];
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -281,7 +285,7 @@ export async function* runChatCompletion(
       maxConsecutiveToolTurns: env.llmMaxConsecutiveToolTurns ?? DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS,
       maxWallTimeMs: env.llmMaxWallTimeMs ?? DEFAULT_MAX_WALL_TIME_MS,
       builtIns,
-      extraTools: [],
+      extraTools,
       defaultTextResponseMode: "require_tool_result",
       rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
       context: {
