@@ -1,6 +1,6 @@
 # CRM Chat
 
-Azure Functions adapter for a CRM-aware chat runtime. It exposes a `/chat` endpoint with an OpenAI-style request shape, loads workspace instructions from `crm-ai-workspace/AGENTS.md`, and gives the model one host-owned API tool for CRM data access.
+Azure Functions adapter for a CRM-aware chat runtime. It exposes a `/chat` endpoint with an OpenAI-style request shape, loads workspace instructions from `workspace/server-agents.md`, and gives the model one host-owned API tool for CRM data access.
 
 The important boundary: the model does not get filesystem, shell, or web-fetch access. CRM reads go through `data_tool`, which only permits configured GET routes under `API_BASE_URL` with server-controlled auth and security headers.
 
@@ -10,7 +10,7 @@ The important boundary: the model does not get filesystem, shell, or web-fetch a
 - Accepts OpenAI-style chat completion requests.
 - Supports streamed Server-Sent Events and aggregate JSON responses.
 - Resolves the caller from a bearer token through the configured CRM identity endpoint.
-- Appends `crm-ai-workspace/AGENTS.md` to the runtime system prompt.
+- Appends `workspace/server-agents.md` to the runtime system prompt.
 - Exposes `data_tool` for allowlisted CRM read routes under `API_BASE_URL`.
 - Redacts known secret values from emitted tool events.
 
@@ -40,7 +40,7 @@ Required server settings for normal CRM chat:
 | `API_AUTH_URL` | Identity endpoint used to resolve the current user from the caller token; accepts an absolute URL or a path under `API_BASE_URL`. |
 | `API_DATA_TOOL_ALLOWED_ROUTES` | Comma, semicolon, or newline separated GET route allowlist for `data_tool`, for example `GET /api/data/accounts/:id`. |
 | `CRM_ALLOWED_ORIGINS` | Comma, semicolon, or newline separated browser origins allowed to call `/chat`. No wildcard is emitted. |
-| `WORKSPACE_ROOT` | Workspace directory containing `AGENTS.md`; for this repo use `crm-ai-workspace`. |
+| `WORKSPACE_ROOT` | Workspace directory containing `server-agents.md`; for this repo use `workspace`. |
 
 Configure at least one LLM provider:
 
@@ -176,7 +176,7 @@ Without streaming, the function returns a JSON `chat.completion` object with the
 
 ## Workspace Instructions
 
-Runtime behavior depends on [crm-ai-workspace/AGENTS.md](./crm-ai-workspace/AGENTS.md). That file is the contract for CRM API use:
+Runtime behavior depends on [workspace/server-agents.md](./workspace/server-agents.md). That file is the contract for CRM API use:
 
 - Use `data_tool` for CRM data.
 - Keep calls relative to `API_BASE_URL`.
@@ -184,7 +184,7 @@ Runtime behavior depends on [crm-ai-workspace/AGENTS.md](./crm-ai-workspace/AGEN
 - Use configured GET read routes only.
 - Do not invent data when API responses fail or do not match expectations.
 
-The function caches the loaded `AGENTS.md` content per workspace root.
+The function caches the loaded `server-agents.md` content per workspace root.
 
 ## Development Notes
 

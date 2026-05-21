@@ -10,7 +10,7 @@ import { loadEnv, type EnvConfig } from "../config/env.js";
 import { runChatCompletion } from "../runtime/runChatCompletion.js";
 import type { ChatCompletionRequest, ChatMessage, RuntimeEvent } from "../runtime/runtimeTypes.js";
 import { mapRuntimeEvent } from "../sse/mapRuntimeEvent.js";
-import { loadAgentsMdCache, type LoadedAgentsMd } from "../workspace/loadAgentsMd.js";
+import { loadServerAgentsMdWithPath, type LoadedServerAgentsMd } from "../workspace/loadServerAgentsMd.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type HttpError = Error & { statusCode?: number };
@@ -25,8 +25,8 @@ type RequestAuthTokens = {
 
 const GOOGLE_AUTH_HEADER = "X-Google-Auth";
 
-let agentsMdCachePromise: Promise<LoadedAgentsMd> | undefined;
-let agentsMdCacheWorkspaceRoot: string | undefined;
+let serverAgentsMdCachePromise: Promise<LoadedServerAgentsMd> | undefined;
+let serverAgentsMdCacheWorkspaceRoot: string | undefined;
 
 function createHttpError(message: string, statusCode: number): HttpError {
   const error = new Error(message) as HttpError;
@@ -214,13 +214,13 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
   };
 }
 
-function getAgentsMdCache(workspaceRoot: string): Promise<LoadedAgentsMd> {
-  if (!agentsMdCachePromise || agentsMdCacheWorkspaceRoot !== workspaceRoot) {
-    agentsMdCacheWorkspaceRoot = workspaceRoot;
-    agentsMdCachePromise = loadAgentsMdCache(workspaceRoot);
+function getServerAgentsMdCache(workspaceRoot: string): Promise<LoadedServerAgentsMd> {
+  if (!serverAgentsMdCachePromise || serverAgentsMdCacheWorkspaceRoot !== workspaceRoot) {
+    serverAgentsMdCacheWorkspaceRoot = workspaceRoot;
+    serverAgentsMdCachePromise = loadServerAgentsMdWithPath(workspaceRoot);
   }
 
-  return agentsMdCachePromise;
+  return serverAgentsMdCachePromise;
 }
 
 function encodeSseEvent(event: { event: string; data: string }): Uint8Array {
@@ -317,7 +317,7 @@ export async function chat(
 
     const chatRequest = parseRequestBody(rawBody);
     const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
-    const agentsMdCache = await getAgentsMdCache(workspaceRoot);
+    const serverAgentsMdCache = await getServerAgentsMdCache(workspaceRoot);
     const abortController = new AbortController();
 
     context.log(`[chat] userId=${userId} authSource=${authTokens.source}`);
@@ -327,7 +327,7 @@ export async function chat(
       stream: chatRequest.stream === true,
       userId,
       workspaceRoot,
-      agentsMd: agentsMdCache.content,
+      serverAgentsMd: serverAgentsMdCache.content,
       accessToken: authTokens.token,
       accessTokenHeader: authTokens.source,
       signal: abortController.signal

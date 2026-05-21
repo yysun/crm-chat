@@ -1,6 +1,6 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
- * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
+ * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace server-agents.md content.
  * Recent changes: makes provider/model and sampling policy server-owned for normal chat callers.
  */
 
@@ -22,7 +22,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "You are a workspace agent running inside ai-workspace.",
   "Help the user using the messages and context provided in the request.",
   "Do not claim to inspect local files, configuration, environment variables, logs, generated outputs, or repository state.",
-  "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from AGENTS.md.",
+  "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from server-agents.md.",
   "Ask for clarification when required information is missing or the user requests a destructive, modifying, external, or irreversible action.",
   "Do not reveal secret values."
 ].join(" ");
@@ -156,11 +156,11 @@ export function describeRuntimeDefaults(env: EnvConfig): {
   };
 }
 
-export function composeSystemPrompt(agentsMd: string | null | undefined): string {
+export function composeSystemPrompt(serverAgentsMd: string | null | undefined): string {
   const sections = [DEFAULT_SYSTEM_PROMPT];
 
-  if (agentsMd?.trim()) {
-    sections.push(`Additional workspace instructions:\n${agentsMd.trim()}`);
+  if (serverAgentsMd?.trim()) {
+    sections.push(`Additional workspace instructions:\n${serverAgentsMd.trim()}`);
   }
 
   return sections.join("\n\n");
@@ -178,12 +178,12 @@ function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {
 
 export function buildRuntimeMessages(
   messages: ChatMessage[],
-  agentsMd: string | null
+  serverAgentsMd: string | null
 ): LLMChatMessage[] {
   return [
     {
       role: "system",
-      content: composeSystemPrompt(agentsMd)
+      content: composeSystemPrompt(serverAgentsMd)
     },
     ...toLlmMessages(messages)
   ];

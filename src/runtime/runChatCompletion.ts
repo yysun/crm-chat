@@ -1,6 +1,6 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
- * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins to llm-runtime, and emits a unified event stream for SSE and JSON callers.
+ * Notes: appends workspace server-agents.md to the server system prompt, delegates built-ins to llm-runtime, and emits a unified event stream for SSE and JSON callers.
  * Recent changes: passes trusted request auth header names into the host-owned API tool env.
  */
 
@@ -270,7 +270,7 @@ export async function* runChatCompletion(
       requestEnv.API_AUTH_HEADER = input.accessTokenHeader;
     }
 
-    const agentsMd = input.agentsMd ?? null;
+    const serverAgentsMd = input.serverAgentsMd ?? null;
     const workingDirectory = resolveWorkspaceRoot(input.workspaceRoot);
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
@@ -282,7 +282,7 @@ export async function* runChatCompletion(
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
       model: runtimeTarget.model,
-      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
+      messages: buildRuntimeMessages(input.messages as ChatMessage[], serverAgentsMd),
       temperature: resolveTemperature(input, env),
       maxTokens: resolveMaxTokens(input, env),
       maxIterations,

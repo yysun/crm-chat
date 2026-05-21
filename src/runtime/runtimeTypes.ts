@@ -26,7 +26,7 @@ export type RunChatCompletionInput = {
   stream: boolean;
   userId: string;
   workspaceRoot: string;
-  agentsMd?: string | null;
+  serverAgentsMd?: string | null;
   accessToken?: string;
   accessTokenHeader?: string;
   signal?: AbortSignal;
